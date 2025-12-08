@@ -7,11 +7,11 @@ export const batchRoutes = Router();
 export const watchlistRoutes = Router();
 
 // --- Product Routes ---
+// Get historical data for charts (more specific route first)
+productRoutes.get('/:asin/history', productController.getProductHistory);
+
 // Get single product details (fetches live or DB cache)
 productRoutes.get('/:asin', productController.getProductDetails);
-
-// Get historical data for charts
-productRoutes.get('/:asin/history', productController.getProductHistory);
 
 // --- Batch Routes ---
 // Bulk analysis

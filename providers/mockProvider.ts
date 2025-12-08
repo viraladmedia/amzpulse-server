@@ -17,6 +17,7 @@ export interface ExternalProductData {
   isIpRisk: boolean;
   priceHistory: { date: string; price: number }[];
   bsrHistory: { date: string; rank: number }[];
+  image?: string; // ADDED: optional image
 }
 
 export const getProductData = async (asin: string): Promise<ExternalProductData> => {
@@ -42,24 +43,44 @@ export const getProductData = async (asin: string): Promise<ExternalProductData>
     isHazmat: Math.random() > 0.9,
     isIpRisk: Math.random() > 0.9,
     priceHistory: generateMockHistory(basePrice, 'price'),
-    bsrHistory: generateMockHistory(baseBsr, 'rank')
+    bsrHistory: generateMockHistory(baseBsr, 'rank'),
+    image: `https://picsum.photos/seed/${asin}/400/400` // ADDED: mock image
   };
 };
 
-// Helper for history generation
-const generateMockHistory = (baseVal: number, type: 'price' | 'rank') => {
-  const history = [];
+// Helper for history generation (typed overloads)
+export function generateMockHistory(baseVal: number, type: 'price'): { date: string; price: number }[];
+export function generateMockHistory(baseVal: number, type: 'rank'): { date: string; rank: number }[];
+export function generateMockHistory(baseVal: number, type: 'price' | 'rank') {
+  const historyDays = 30;
   const now = new Date();
-  for (let i = 30; i >= 0; i--) {
-    const d = new Date(now);
-    d.setDate(d.getDate() - i);
-    const dateStr = d.toISOString().split('T')[0];
-    
-    const fluctuation = (Math.random() - 0.5) * (baseVal * 0.1);
-    const val = Math.max(0, baseVal + fluctuation);
-    
-    if (type === 'price') history.push({ date: dateStr, price: parseFloat(val.toFixed(2)) });
-    else history.push({ date: dateStr, rank: Math.floor(val) });
+
+  if (type === 'price') {
+    const priceHistory: { date: string; price: number }[] = [];
+    for (let i = historyDays; i >= 0; i--) {
+      const d = new Date(now);
+      d.setDate(d.getDate() - i);
+      const dateStr = d.toISOString().split('T')[0];
+
+      const fluctuation = (Math.random() - 0.5) * (baseVal * 0.1);
+      const val = Math.max(0, baseVal + fluctuation);
+
+      priceHistory.push({ date: dateStr, price: parseFloat(val.toFixed(2)) });
+    }
+    return priceHistory;
+  } else {
+    const bsrHistory: { date: string; rank: number }[] = [];
+    for (let i = historyDays; i >= 0; i--) {
+      const d = new Date(now);
+      d.setDate(d.getDate() - i);
+      const dateStr = d.toISOString().split('T')[0];
+
+      // BSR fluctuations should be integer and stay >=1
+      const fluctuation = (Math.random() - 0.5) * (baseVal * 0.1);
+      const val = Math.max(1, baseVal + fluctuation);
+
+      bsrHistory.push({ date: dateStr, rank: Math.floor(val) });
+    }
+    return bsrHistory;
   }
-  return history;
-};
+}
