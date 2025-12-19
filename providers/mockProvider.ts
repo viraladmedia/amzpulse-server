@@ -1,24 +1,4 @@
-// This mimics the structure of an external API response (like SP-API or Keepa)
-
-export interface ExternalProductData {
-  asin: string;
-  title: string;
-  brand: string;
-  category: string;
-  price: number;
-  bsr: number;
-  estSales: number;
-  sellers: number;
-  referralFee: number;
-  fbaFee: number;
-  weight: string;
-  dimensions: string;
-  isHazmat: boolean;
-  isIpRisk: boolean;
-  priceHistory: { date: string; price: number }[];
-  bsrHistory: { date: string; rank: number }[];
-  image?: string; // ADDED: optional image
-}
+import { ExternalProductData } from './types';
 
 export const getProductData = async (asin: string): Promise<ExternalProductData> => {
   // Simulate network latency
@@ -32,16 +12,25 @@ export const getProductData = async (asin: string): Promise<ExternalProductData>
     title: `Mock Product Title for ${asin}`,
     brand: "MockBrand",
     category: "Home & Kitchen",
+    subCategory: "General",
     price: parseFloat(basePrice.toFixed(2)),
     bsr: baseBsr,
     estSales: Math.floor(500000 / baseBsr),
     sellers: Math.floor(Math.random() * 15) + 1,
     referralFee: parseFloat((basePrice * 0.15).toFixed(2)),
     fbaFee: 5.50,
+    storageFee: 0.55,
     weight: "1.2 lbs",
     dimensions: "10x5x2 in",
     isHazmat: Math.random() > 0.9,
     isIpRisk: Math.random() > 0.9,
+    isOversized: false,
+    rating: parseFloat((Math.random() * 1.5 + 3.5).toFixed(2)),
+    reviews: Math.floor(Math.random() * 5000),
+    trend: Math.floor(Math.random() * 40) - 10,
+    description: "Mock description for testing UI fields.",
+    seasonalityTags: ["Evergreen"],
+    analysis: null,
     priceHistory: generateMockHistory(basePrice, 'price'),
     bsrHistory: generateMockHistory(baseBsr, 'rank'),
     image: `https://picsum.photos/seed/${asin}/400/400` // ADDED: mock image

@@ -14,10 +14,13 @@ model User {
   id        String   @id @default(uuid())
   email     String   @unique
   name      String?
+  passwordHash String?
   createdAt DateTime @default(now())
   
   watchlist WatchlistItem[]
   sourcing  SourcingNote[]
+  memberships Membership[]
+  apiKeys     ApiKey[]
 }
 
 model Product {
@@ -27,6 +30,12 @@ model Product {
   image          String
   category       String
   subCategory    String?
+  rating         Decimal? @db.Decimal(3, 2)
+  reviews        Int?
+  trend          Int?
+  storageFee     Decimal? @db.Decimal(10, 2)
+  description    String?
+  seasonalityTags Json?
   
   // Current Live Stats
   currentPrice   Decimal  @db.Decimal(10, 2)
@@ -55,6 +64,64 @@ model Product {
   sourcingNotes  SourcingNote[]
 }
 
+model Organization {
+  id          String        @id @default(uuid())
+  name        String
+  plan        String        @default("free")
+  stripeCustomerId   String?
+  stripeSubscriptionId String?
+  planRenewsAt DateTime?
+  createdAt   DateTime      @default(now())
+  members     Membership[]
+  apiKeys     ApiKey[]
+  watchlist   WatchlistItem[]
+  sourcing    SourcingNote[]
+  usage       OrganizationUsage[]
+}
+
+model Membership {
+  id              String        @id @default(uuid())
+  userId          String
+  organizationId  String
+  role            String        @default("member")
+  createdAt       DateTime      @default(now())
+
+  user            User          @relation(fields: [userId], references: [id])
+  organization    Organization  @relation(fields: [organizationId], references: [id])
+
+  @@unique([userId, organizationId])
+}
+
+model ApiKey {
+  id              String        @id @default(uuid())
+  keyHash         String
+  label           String?
+  userId          String
+  organizationId  String
+  createdAt       DateTime      @default(now())
+  lastUsedAt      DateTime?
+  expiresAt       DateTime?
+  revoked         Boolean       @default(false)
+
+  user            User          @relation(fields: [userId], references: [id])
+  organization    Organization  @relation(fields: [organizationId], references: [id])
+
+  @@index([organizationId])
+}
+
+model OrganizationUsage {
+  id             String   @id @default(uuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  month          String
+  asinsAnalyzed  Int      @default(0)
+  batchRuns      Int      @default(0)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@unique([organizationId, month])
+}
+
 // Time-series snapshots for charts (History)
 model ProductMetric {
   id        String   @id @default(uuid())
@@ -74,12 +141,16 @@ model WatchlistItem {
   user       User     @relation(fields: [userId], references: [id])
   productId  String
   product    Product  @relation(fields: [productId], references: [asin])
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
   
   targetPrice Decimal? @db.Decimal(10, 2)
   targetRoi   Decimal? @db.Decimal(10, 2)
   notes       String?
   
   createdAt   DateTime @default(now())
+
+  @@unique([organizationId, productId])
 }
 
 model SourcingNote {
@@ -88,6 +159,8 @@ model SourcingNote {
   user        User     @relation(fields: [userId], references: [id])
   productId   String
   product     Product  @relation(fields: [productId], references: [asin])
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
   
   supplierUrl String?
   costPrice   Decimal  @db.Decimal(10, 2)

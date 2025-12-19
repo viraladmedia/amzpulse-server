@@ -1,0 +1,94 @@
+import dotenv from 'dotenv';
+import crypto from 'crypto';
+
+dotenv.config();
+
+export interface AppConfig {
+  nodeEnv: string;
+  port: number;
+  databaseUrl?: string;
+  redisUrl?: string;
+  cacheTtlSeconds: number;
+  dbFreshMs: number;
+  provider: {
+    baseUrl?: string;
+    apiKey?: string;
+    rateLimitPerMinute: number;
+  };
+  rateLimit: {
+    windowMs: number;
+    max: number;
+    prefix: string;
+  };
+  jwtSecret: string;
+  stripeSecretKey?: string;
+  stripeWebhookSecret?: string;
+  stripePricePro?: string;
+  frontendUrl: string;
+  enableMetricsSync: boolean;
+  metrics: {
+    cron: string;
+    batchSize: number;
+    concurrency: number;
+  };
+}
+
+const toNumber = (val: string | undefined, fallback: number) => {
+  const parsed = Number(val);
+  return Number.isFinite(parsed) ? parsed : fallback;
+};
+
+const toBool = (val: string | undefined, fallback = false) => {
+  if (val === undefined) return fallback;
+  return ['1', 'true', 'yes', 'on'].includes(val.toLowerCase());
+};
+
+export const loadConfig = (env: NodeJS.ProcessEnv = process.env): AppConfig => {
+  const nodeEnv = env.NODE_ENV || 'development';
+  const port = toNumber(env.PORT, 3001);
+  const databaseUrl = env.DATABASE_URL;
+  if (!databaseUrl) {
+    console.warn('[config] DATABASE_URL is not set. Prisma calls will fail until configured.');
+  }
+
+  const redisUrl = env.REDIS_URL;
+  const cacheTtlSeconds = toNumber(env.CACHE_TTL_SECONDS, 120);
+  const dbFreshMs = toNumber(env.DB_FRESH_MS, 1000 * 60 * 5);
+
+  const jwtSecret = env.JWT_SECRET || env.SECRET || crypto.randomBytes(32).toString('hex');
+  if (!env.JWT_SECRET && !env.SECRET) {
+    console.warn('[config] JWT_SECRET not provided. Generated a temporary secret for this runtime.');
+  }
+
+  return {
+    nodeEnv,
+    port,
+    databaseUrl,
+    redisUrl,
+    cacheTtlSeconds,
+    dbFreshMs,
+    provider: {
+      baseUrl: env.PROVIDER_BASE_URL,
+      apiKey: env.PROVIDER_API_KEY,
+      rateLimitPerMinute: toNumber(env.PROVIDER_RATE_LIMIT_PER_MIN, 60)
+    },
+    rateLimit: {
+      windowMs: toNumber(env.RATE_LIMIT_WINDOW_MS, 60_000),
+      max: toNumber(env.RATE_LIMIT_MAX, 100),
+      prefix: env.RATE_LIMIT_PREFIX || 'rl:'
+    },
+    jwtSecret,
+    stripeSecretKey: env.STRIPE_SECRET_KEY,
+    stripeWebhookSecret: env.STRIPE_WEBHOOK_SECRET,
+    stripePricePro: env.STRIPE_PRICE_PRO,
+    frontendUrl: env.FRONTEND_URL || 'http://localhost:5173',
+    enableMetricsSync: toBool(env.ENABLE_METRICS_SYNC, false),
+    metrics: {
+      cron: env.SYNC_CRON || '*/15 * * * *',
+      batchSize: toNumber(env.SYNC_BATCH_SIZE, 10),
+      concurrency: toNumber(env.SYNC_CONCURRENCY, 3)
+    }
+  };
+};
+
+export const config = loadConfig();
