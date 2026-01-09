@@ -4,6 +4,7 @@ export interface JwtPayload {
   sub: string; // user id
   orgId: string;
   email?: string;
+  role?: string;
   exp?: number;
   iat?: number;
 }
@@ -48,4 +49,3 @@ export const verifyJwt = (token: string, secret: string): JwtPayload | null => {
     return null;
   }
 };
-
