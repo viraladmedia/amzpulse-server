@@ -31,6 +31,10 @@ export interface AppConfig {
     batchSize: number;
     concurrency: number;
   };
+  supabase: {
+    url?: string;
+    publicKey?: string;
+  };
 }
 
 const toNumber = (val: string | undefined, fallback: number) => {
@@ -60,6 +64,13 @@ export const loadConfig = (env: NodeJS.ProcessEnv = process.env): AppConfig => {
     console.warn('[config] JWT_SECRET not provided. Generated a temporary secret for this runtime.');
   }
 
+  const supabaseUrl = env.NEXT_PUBLIC_SUPABASE_URL || env.SUPABASE_URL;
+  const supabasePublicKey =
+    env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY ||
+    env.SUPABASE_PUBLISHABLE_DEFAULT_KEY ||
+    env.SUPABASE_ANON_KEY ||
+    env.SUPABASE_PUBLIC_KEY;
+
   return {
     nodeEnv,
     port,
@@ -87,6 +98,10 @@ export const loadConfig = (env: NodeJS.ProcessEnv = process.env): AppConfig => {
       cron: env.SYNC_CRON || '*/15 * * * *',
       batchSize: toNumber(env.SYNC_BATCH_SIZE, 10),
       concurrency: toNumber(env.SYNC_CONCURRENCY, 3)
+    },
+    supabase: {
+      url: supabaseUrl,
+      publicKey: supabasePublicKey
     }
   };
 };
