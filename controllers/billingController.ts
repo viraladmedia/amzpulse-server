@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import { config } from '../config';
 import logger from '../lib/logger';
+import supabase, { throwIfError } from '../providers/supabase';
 import {
   plansPublic,
   getUsage,
@@ -9,7 +10,6 @@ import {
   getStripeClient,
   handleStripeWebhook
 } from '../services/billingService';
-import prisma from '../prisma/client';
 
 export const listPlans = (_req: Request, res: Response) => {
   return res.json(plansPublic());
@@ -18,7 +18,13 @@ export const listPlans = (_req: Request, res: Response) => {
 export const usage = async (req: Request, res: Response) => {
   if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
   const usage = await getUsage(req.user.organizationId);
-  const org = await prisma.organization.findUnique({ where: { id: req.user.organizationId }, select: { plan: true, planRenewsAt: true } });
+  const org = throwIfError<any>(
+    await supabase
+      .from('Organization')
+      .select('plan, planRenewsAt')
+      .eq('id', req.user.organizationId)
+      .maybeSingle()
+  );
   return res.json({ ...usage, plan: org?.plan || 'free', planRenewsAt: org?.planRenewsAt || null });
 };
 

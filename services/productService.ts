@@ -1,8 +1,9 @@
-import prisma from '../prisma/client';
+import crypto from 'crypto';
 import { cacheGetJSON, cacheSetJSON } from './cacheService';
 import { config } from '../config';
 import logger from '../lib/logger';
 import { getExternalProduct } from './externalProductClient';
+import supabase, { throwIfError } from '../providers/supabase';
 
 // Small helper to transform provider shape -> Prisma/response shape if needed
 const normalizeProviderData = (raw: any) => {
@@ -43,57 +44,66 @@ export const getProductOrFetch = async (asin: string) => {
   if (cached) return cached;
 
   // 2. Try DB
-  let dbProd: any | null = null;
   try {
-    dbProd = await prisma.product.findUnique({
-      where: { asin },
-      include: {
-        metrics: {
-          take: 30,
-          orderBy: { timestamp: 'desc' }
-        }
+    const dbProd = throwIfError<any>(
+      await supabase.from('Product').select('*').eq('asin', asin).maybeSingle()
+    );
+
+    if (dbProd) {
+      const metrics =
+        throwIfError<any[]>(
+          await supabase
+            .from('ProductMetric')
+            .select('price, bsr, timestamp')
+            .eq('productId', asin)
+            .order('timestamp', { ascending: false })
+            .limit(30)
+        ) || [];
+
+      const ageMs = Date.now() - new Date(dbProd.updatedAt).getTime();
+      if (ageMs < config.dbFreshMs) {
+        const tags = Array.isArray(dbProd.seasonalityTags)
+          ? dbProd.seasonalityTags
+          : dbProd.seasonalityTags
+          ? [dbProd.seasonalityTags].flat()
+          : ['Evergreen'];
+        const mapped = {
+          asin: dbProd.asin,
+          title: dbProd.title,
+          brand: dbProd.brand,
+          category: dbProd.category,
+          subCategory: dbProd.subCategory,
+          image: dbProd.image,
+          price: Number(dbProd.currentPrice),
+          bsr: dbProd.currentBsr,
+          estSales: dbProd.estSales,
+          sellers: dbProd.sellers,
+          referralFee: Number(dbProd.referralFee),
+          fbaFee: Number(dbProd.fbaFee),
+          storageFee: dbProd.storageFee ? Number(dbProd.storageFee) : 0.55,
+          rating: dbProd.rating ? Number(dbProd.rating) : 0,
+          reviews: dbProd.reviews ?? 0,
+          trend: dbProd.trend ?? 0,
+          description: dbProd.description || '',
+          seasonalityTags: tags,
+          weight: dbProd.weight,
+          dimensions: dbProd.dimensions,
+          isHazmat: dbProd.isHazmat,
+          isIpRisk: dbProd.isIpRisk,
+          isOversized: dbProd.isOversized,
+          priceHistory: metrics
+            .map((m: any) => ({ date: new Date(m.timestamp).toISOString().split('T')[0], price: Number(m.price) }))
+            .reverse(),
+          bsrHistory: metrics
+            .map((m: any) => ({ date: new Date(m.timestamp).toISOString().split('T')[0], rank: m.bsr }))
+            .reverse()
+        };
+        await cacheSetJSON(cacheKey, mapped, config.cacheTtlSeconds);
+        return mapped;
       }
-    });
+    }
   } catch (err) {
     logger.warn('Database unavailable when fetching product, falling back to provider', { error: err });
-  }
-
-  if (dbProd) {
-    const ageMs = Date.now() - new Date(dbProd.updatedAt).getTime();
-    // If DB entry is fresh enough, map and return
-    if (ageMs < config.dbFreshMs) {
-      const tags = Array.isArray(dbProd.seasonalityTags) ? dbProd.seasonalityTags : ['Evergreen'];
-      const mapped = {
-        asin: dbProd.asin,
-        title: dbProd.title,
-        brand: dbProd.brand,
-        category: dbProd.category,
-        subCategory: dbProd.subCategory,
-        image: dbProd.image,
-        price: Number(dbProd.currentPrice),
-        bsr: dbProd.currentBsr,
-        estSales: dbProd.estSales,
-        sellers: dbProd.sellers,
-        referralFee: Number(dbProd.referralFee),
-        fbaFee: Number(dbProd.fbaFee),
-        storageFee: dbProd.storageFee ? Number(dbProd.storageFee) : 0.55,
-        rating: dbProd.rating ? Number(dbProd.rating) : 0,
-        reviews: dbProd.reviews ?? 0,
-        trend: dbProd.trend ?? 0,
-        description: dbProd.description || '',
-        seasonalityTags: tags,
-        weight: dbProd.weight,
-        dimensions: dbProd.dimensions,
-        isHazmat: dbProd.isHazmat,
-        isIpRisk: dbProd.isIpRisk,
-        isOversized: dbProd.isOversized,
-        priceHistory: dbProd.metrics.map((m: any) => ({ date: m.timestamp.toISOString().split('T')[0], price: Number(m.price) })).reverse(),
-        bsrHistory: dbProd.metrics.map((m: any) => ({ date: m.timestamp.toISOString().split('T')[0], rank: m.bsr })).reverse()
-      };
-      // cache and return
-      await cacheSetJSON(cacheKey, mapped, config.cacheTtlSeconds);
-      return mapped;
-    }
   }
 
   // 3. Fetch from provider
@@ -102,69 +112,49 @@ export const getProductOrFetch = async (asin: string) => {
 
   // Persist to DB (upsert)
   try {
-    await prisma.product.upsert({
-      where: { asin },
-      create: {
-        asin,
-        title: live.title,
-        brand: live.brand,
-        image: providerRaw.image || '',
-        category: live.category,
-        subCategory: live.subCategory,
-        rating: live.rating || null,
-        reviews: live.reviews || null,
-        trend: live.trend || null,
-        storageFee: live.storageFee || null,
-        description: live.description || null,
-        seasonalityTags: live.seasonalityTags || null,
-        currentPrice: live.price,
-        currentBsr: Math.floor(live.bsr),
-        estSales: Math.floor(live.estSales),
-        sellers: live.sellers,
-        referralFee: live.referralFee,
-        fbaFee: live.fbaFee,
-        weight: live.weight || null,
-        dimensions: live.dimensions || null,
-        isHazmat: live.isHazmat,
-        isIpRisk: live.isIpRisk,
-        isOversized: live.isOversized
-      },
-      update: {
-        title: live.title,
-        brand: live.brand,
-        image: providerRaw.image || '',
-        category: live.category,
-        subCategory: live.subCategory,
-        rating: live.rating || undefined,
-        reviews: live.reviews || undefined,
-        trend: live.trend || undefined,
-        storageFee: live.storageFee || undefined,
-        description: live.description || undefined,
-        seasonalityTags: live.seasonalityTags || undefined,
-        currentPrice: live.price,
-        currentBsr: Math.floor(live.bsr),
-        estSales: Math.floor(live.estSales),
-        sellers: live.sellers,
-        referralFee: live.referralFee,
-        fbaFee: live.fbaFee,
-        weight: live.weight || null,
-        dimensions: live.dimensions || null,
-        isHazmat: live.isHazmat,
-        isIpRisk: live.isIpRisk,
-        isOversized: live.isOversized
-      }
-    });
+    const { error: upsertError } = await supabase
+      .from('Product')
+      .upsert(
+        {
+          asin,
+          title: live.title,
+          brand: live.brand,
+          image: providerRaw.image || '',
+          category: live.category,
+          subCategory: live.subCategory,
+          rating: live.rating || null,
+          reviews: live.reviews || null,
+          trend: live.trend || null,
+          storageFee: live.storageFee || null,
+          description: live.description || null,
+          seasonalityTags: live.seasonalityTags || null,
+          currentPrice: live.price,
+          currentBsr: Math.floor(live.bsr),
+          estSales: Math.floor(live.estSales),
+          sellers: live.sellers,
+          referralFee: live.referralFee,
+          fbaFee: live.fbaFee,
+          weight: live.weight || null,
+          dimensions: live.dimensions || null,
+          isHazmat: live.isHazmat,
+          isIpRisk: live.isIpRisk,
+          isOversized: live.isOversized,
+          updatedAt: new Date().toISOString()
+        },
+        { onConflict: 'asin' }
+      );
+    if (upsertError) throw upsertError;
 
-    // Insert a metric snapshot (latest)
-    await prisma.productMetric.create({
-      data: {
-        productId: asin,
-        price: live.price,
-        bsr: Math.floor(live.bsr)
-      }
+    const { error: metricError } = await supabase.from('ProductMetric').insert({
+      id: crypto.randomUUID(),
+      productId: asin,
+      price: live.price,
+      bsr: Math.floor(live.bsr),
+      timestamp: new Date().toISOString()
     });
+    if (metricError) throw metricError;
   } catch (err) {
-    logger.warn('Prisma upsert failed', { error: err });
+    logger.warn('Supabase upsert failed', { error: err });
   }
 
   // Cache provider response for immediate reuse

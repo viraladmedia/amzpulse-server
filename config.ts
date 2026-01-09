@@ -34,6 +34,7 @@ export interface AppConfig {
   supabase: {
     url?: string;
     publicKey?: string;
+    serviceKey?: string;
   };
 }
 
@@ -70,6 +71,10 @@ export const loadConfig = (env: NodeJS.ProcessEnv = process.env): AppConfig => {
     env.SUPABASE_PUBLISHABLE_DEFAULT_KEY ||
     env.SUPABASE_ANON_KEY ||
     env.SUPABASE_PUBLIC_KEY;
+  const supabaseServiceKey =
+    env.SUPABASE_SERVICE_ROLE_KEY ||
+    env.SUPABASE_SERVICE_KEY ||
+    env.SUPABASE_SECRET_KEY;
 
   return {
     nodeEnv,
@@ -101,7 +106,8 @@ export const loadConfig = (env: NodeJS.ProcessEnv = process.env): AppConfig => {
     },
     supabase: {
       url: supabaseUrl,
-      publicKey: supabasePublicKey
+      publicKey: supabasePublicKey,
+      serviceKey: supabaseServiceKey
     }
   };
 };

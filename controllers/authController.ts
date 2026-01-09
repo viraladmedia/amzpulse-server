@@ -1,7 +1,7 @@
 import { Request, Response } from 'express';
-import prisma from '../prisma/client';
 import { registerUser, loginUser, createApiKey } from '../services/authService';
 import logger from '../lib/logger';
+import supabase, { throwIfError } from '../providers/supabase';
 
 const isValidEmail = (email?: string) => !!email && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 
@@ -12,13 +12,12 @@ export const register = async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'Email and password are required (password min 8 chars)' });
     }
     const result = await registerUser({ email, password, name });
-    const org = await prisma.organization.findUnique({ where: { id: result.organization.id }, select: { plan: true, planRenewsAt: true } });
     return res.status(201).json({
       token: result.token,
       user: { id: result.user.id, email: result.user.email, name: result.user.name },
       organization: result.organization,
-      plan: org?.plan || 'free',
-      planRenewsAt: org?.planRenewsAt || null
+      plan: result.organization.plan || 'free',
+      planRenewsAt: result.organization.planRenewsAt || null
     });
   } catch (err) {
     logger.warn('Registration failed', { error: err });
@@ -33,7 +32,13 @@ export const login = async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'Invalid credentials' });
     }
     const result = await loginUser({ email, password });
-    const org = await prisma.organization.findUnique({ where: { id: result.organizationId }, select: { plan: true, planRenewsAt: true } });
+    const org = throwIfError<any>(
+      await supabase
+        .from('Organization')
+        .select('plan, planRenewsAt')
+        .eq('id', result.organizationId)
+        .maybeSingle()
+    );
     return res.json({
       token: result.token,
       user: { id: result.user.id, email: result.user.email, name: result.user.name },
@@ -52,20 +57,23 @@ export const me = async (req: Request, res: Response) => {
   if (!req.user) {
     return res.status(401).json({ error: 'Unauthorized' });
   }
-  const user = await prisma.user.findUnique({
-    where: { id: req.user.userId },
-    select: { id: true, email: true, name: true }
-  });
-  const org = await prisma.organization.findUnique({ where: { id: req.user.organizationId }, select: { plan: true, planRenewsAt: true } });
+  const user = throwIfError<any>(
+    await supabase.from('User').select('id, email, name').eq('id', req.user.userId).maybeSingle()
+  );
+  const org = throwIfError<any>(
+    await supabase.from('Organization').select('plan, planRenewsAt').eq('id', req.user.organizationId).maybeSingle()
+  );
   return res.json({ user, organizationId: req.user.organizationId, role: req.user.role, plan: org?.plan || 'free', planRenewsAt: org?.planRenewsAt || null });
 };
 
 export const listApiKeys = async (req: Request, res: Response) => {
   if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
-  const keys = await prisma.apiKey.findMany({
-    where: { organizationId: req.user.organizationId },
-    select: { id: true, label: true, createdAt: true, lastUsedAt: true, expiresAt: true, revoked: true }
-  });
+  const keys = throwIfError<any[]>(
+    await supabase
+      .from('ApiKey')
+      .select('id, label, createdAt, lastUsedAt, expiresAt, revoked')
+      .eq('organizationId', req.user.organizationId)
+  ) || [];
   return res.json(keys);
 };
 

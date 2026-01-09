@@ -1,7 +1,7 @@
 import crypto from 'crypto';
-import prisma from '../prisma/client';
 import { config } from '../config';
 import { signJwt } from '../lib/jwt';
+import supabase, { requireData, throwIfError } from '../providers/supabase';
 
 const HASH_ALGO = 'scrypt';
 
@@ -39,34 +39,43 @@ export const verifyPassword = (password: string, storedHash?: string | null): Pr
 
 const hashApiKey = (raw: string) => crypto.createHash('sha256').update(raw).digest('hex');
 
-export const registerUser = async (input: { email: string; password: string; name?: string }) => {
+export const registerUser = async (
+  input: { email: string; password: string; name?: string }
+): Promise<{ user: any; organization: any; token: string }> => {
   const email = input.email.toLowerCase();
-  const existing = await prisma.user.findUnique({ where: { email } });
+  const existing = throwIfError<any>(
+    await supabase.from('User').select('id').eq('email', email).maybeSingle()
+  );
   if (existing) {
     throw new Error('User already exists');
   }
 
-  const passwordHash = await hashPassword(input.password);
-  const org = await prisma.organization.create({
-    data: {
-      name: `${input.name || email}'s Workspace`
-    }
-  });
+  const orgId = crypto.randomUUID();
+  const userId = crypto.randomUUID();
+  const membershipId = crypto.randomUUID();
 
-  const user = await prisma.user.create({
-    data: {
-      email,
-      name: input.name,
-      passwordHash,
-      memberships: {
-        create: {
-          organizationId: org.id,
-          role: 'owner'
-        }
-      }
-    },
-    include: { memberships: true }
-  });
+  const passwordHash = await hashPassword(input.password);
+  const org = requireData<any>(
+    await supabase
+      .from('Organization')
+      .insert({ id: orgId, name: `${input.name || email}'s Workspace` })
+      .select()
+      .single()
+  );
+
+  const user = requireData<any>(
+    await supabase
+      .from('User')
+      .insert({ id: userId, email, name: input.name, passwordHash })
+      .select()
+      .single()
+  );
+
+  throwIfError(
+    await supabase
+      .from('Membership')
+      .insert({ id: membershipId, organizationId: orgId, userId, role: 'owner' })
+  );
 
   const token = signJwt(
     { sub: user.id, orgId: org.id, email: user.email, role: 'owner' },
@@ -77,9 +86,17 @@ export const registerUser = async (input: { email: string; password: string; nam
   return { user, organization: org, token };
 };
 
-export const loginUser = async (input: { email: string; password: string }) => {
+export const loginUser = async (
+  input: { email: string; password: string }
+): Promise<{ user: any; organizationId: string; role: string; token: string }> => {
   const email = input.email.toLowerCase();
-  const user = await prisma.user.findUnique({ where: { email }, include: { memberships: true } });
+  const user = requireData<any>(
+    await supabase
+      .from('User')
+      .select('id, email, name, passwordHash')
+      .eq('email', email)
+      .maybeSingle()
+  );
   if (!user || !user.passwordHash) {
     throw new Error('Invalid credentials');
   }
@@ -89,7 +106,14 @@ export const loginUser = async (input: { email: string; password: string }) => {
     throw new Error('Invalid credentials');
   }
 
-  const membership = user.memberships[0];
+  const membership = requireData<any>(
+    await supabase
+      .from('Membership')
+      .select('organizationId, role')
+      .eq('userId', user.id)
+      .limit(1)
+      .maybeSingle()
+  );
   if (!membership) {
     throw new Error('No organization assigned');
   }
@@ -108,43 +132,54 @@ export const createApiKey = async (input: {
   organizationId: string;
   label?: string;
   expiresAt?: Date;
-}) => {
+}): Promise<{ apiKey: any; key: string }> => {
   const rawKey = `ak_${crypto.randomBytes(24).toString('hex')}`;
   const keyHash = hashApiKey(rawKey);
+  const id = crypto.randomUUID();
 
-  const apiKey = await prisma.apiKey.create({
-    data: {
-      keyHash,
-      label: input.label,
-      userId: input.userId,
-      organizationId: input.organizationId,
-      expiresAt: input.expiresAt || null
-    }
-  });
+  const apiKey = requireData<any>(
+    await supabase
+      .from('ApiKey')
+      .insert({
+        id,
+        keyHash,
+        label: input.label,
+        userId: input.userId,
+        organizationId: input.organizationId,
+        expiresAt: input.expiresAt ? input.expiresAt.toISOString() : null,
+        revoked: false
+      })
+      .select()
+      .single()
+  );
 
   return { apiKey, key: rawKey };
 };
 
 export const validateApiKey = async (key: string): Promise<AuthContext | null> => {
   const keyHash = hashApiKey(key);
-  const apiKey = await prisma.apiKey.findFirst({
-    where: {
-      keyHash,
-      revoked: false,
-      OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }]
-    }
-  });
+  const apiKey = throwIfError<any>(
+    await supabase
+      .from('ApiKey')
+      .select('*')
+      .eq('keyHash', keyHash)
+      .eq('revoked', false)
+      .or(`expiresAt.is.null,expiresAt.gt.${new Date().toISOString()}`)
+      .maybeSingle()
+  );
 
   if (!apiKey) return null;
 
-  await prisma.apiKey.update({
-    where: { id: apiKey.id },
-    data: { lastUsedAt: new Date() }
-  });
+  await supabase.from('ApiKey').update({ lastUsedAt: new Date().toISOString() }).eq('id', apiKey.id);
 
-  const membership = await prisma.membership.findFirst({
-    where: { userId: apiKey.userId, organizationId: apiKey.organizationId }
-  });
+  const membership = throwIfError<any>(
+    await supabase
+      .from('Membership')
+      .select('role')
+      .eq('userId', apiKey.userId)
+      .eq('organizationId', apiKey.organizationId)
+      .maybeSingle()
+  );
 
   return {
     userId: apiKey.userId,
