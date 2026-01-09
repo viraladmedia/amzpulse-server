@@ -1,5 +1,5 @@
 import express from 'express';
-import cors from 'cors';
+import cors, { CorsOptions } from 'cors';
 import { productRoutes, batchRoutes, watchlistRoutes, authRoutes, sourcingRoutes, billingRoutes } from './routes';
 import dotenv from 'dotenv';
 import morgan from 'morgan';
@@ -14,8 +14,21 @@ dotenv.config();
 const app = express();
 const PORT = config.port;
 
+const allowedOrigins = config.frontendUrl.split(',').map((o) => o.trim()).filter(Boolean);
+const corsOptions: CorsOptions = {
+  origin: (origin, callback) => {
+    if (!origin) return callback(null, true); // allow server-to-server and curl
+    if (allowedOrigins.length === 0 || allowedOrigins.includes('*') || allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    }
+    return callback(new Error('Not allowed by CORS'));
+  },
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
+};
+
 // Middleware
-app.use(cors());
+app.use(cors(corsOptions));
+app.options('*', cors(corsOptions));
 // Stripe webhook needs raw body before JSON parsing
 app.post('/api/billing/webhook', express.raw({ type: 'application/json' }), billingController.webhook);
 app.use(express.json());

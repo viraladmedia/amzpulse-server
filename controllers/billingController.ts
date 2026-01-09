@@ -9,6 +9,7 @@ import {
   getStripeClient,
   handleStripeWebhook
 } from '../services/billingService';
+import prisma from '../prisma/client';
 
 export const listPlans = (_req: Request, res: Response) => {
   return res.json(plansPublic());
